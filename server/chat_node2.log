@@ -1,0 +1,6 @@
+{"type": "chat", "id": "6dab8ff2a41c48db8e986830cd99718f", "user": "User 1", "text": "Good Afternoon. Are you available this weekend", "to": null, "ts": 1793701626.9246237, "node": "node1"}
+{"type": "chat", "id": "c0e0008e63b54b1cbfc1cc60431de5be", "user": "User 2", "text": "Yes I am. how May I help you", "to": null, "ts": 1793701664.556876, "node": "node2"}
+{"type": "chat", "id": "94e603ff1f5846b49b30167e1801f8aa", "user": "User 1", "text": "I was wondering if you would like to join me for a dinner at the new resteurant on the Fifth Avenue on Saturday Evening.", "to": null, "ts": 1793701742.1884475, "node": "node1"}
+{"type": "chat", "id": "6f61a877425d4a9a9050e8a486c5dce7", "user": "User 2", "text": "That would be pleasant, Seven Oclock works well for me", "to": null, "ts": 1793701785.0923781, "node": "node2"}
+{"type": "chat", "id": "d018b44c60104637a16904a2a093a08e", "user": "User 3", "text": "I am also Available. Lets gather there", "to": null, "ts": 1793702276.2103498, "node": "node2"}
+{"type": "chat", "id": "222ac3d1176e426996cb2e0d3d7d07aa", "user": "User 3", "text": "Back Online", "to": null, "ts": 1793702790.3280725, "node": "node2"}

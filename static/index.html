@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed Chat</title>
+<style>
+  :root {
+    --ink: #1c2530; --muted: #6b7684; --paper: #f4f6f8; --panel: #ffffff;
+    --line: #dde2e8; --accent: #0e7c6b; --accent-ink: #ffffff;
+    --mine: #d9f0ea; --private: #ece6fb; --bad: #b3372c; --ok: #1f9d55;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; color: var(--ink);
+         background: var(--paper); font-size: 15px; }
+  button, input { font: inherit; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* login */
+  #login { height: 100%; display: grid; place-items: center; padding: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 32px; width: 100%; max-width: 380px; }
+  .card h1 { margin: 0 0 6px; font-size: 24px; }
+  .card p { margin: 0 0 20px; color: var(--muted); }
+  .card input { width: 100%; padding: 10px 12px; border: 1px solid var(--line);
+                border-radius: 6px; margin-bottom: 12px; }
+  .card button { width: 100%; padding: 10px; border: 0; border-radius: 6px;
+                 background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  #loginError { color: var(--bad); min-height: 20px; margin: 0 0 8px; font-size: 14px; }
+
+  /* chat layout */
+  #app { height: 100%; display: none; grid-template-columns: 220px 1fr; grid-template-rows: auto 1fr; }
+  header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center;
+           padding: 12px 18px; background: var(--ink); color: #fff; }
+  header strong { font-size: 17px; }
+  #status { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.online { background: var(--ok); } .dot.offline { background: var(--bad); }
+  aside { background: var(--panel); border-right: 1px solid var(--line); padding: 14px; overflow-y: auto; }
+  aside h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  #users { list-style: none; margin: 0; padding: 0; }
+  #users li { padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+  #users li:hover { background: var(--paper); }
+  #users li.me { cursor: default; font-weight: 600; }
+  main { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+  #messages { overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 70%; padding: 8px 12px; border-radius: 10px; background: var(--panel);
+         border: 1px solid var(--line); overflow-wrap: anywhere; }
+  .msg.mine { align-self: flex-end; background: var(--mine); border-color: #b5dfd5; }
+  .msg.private { background: var(--private); border-color: #cfc3f2; }
+  .meta { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .note { align-self: center; font-size: 13px; color: var(--muted); }
+  .note.err { color: var(--bad); }
+  form { display: flex; gap: 8px; padding: 12px 18px; background: var(--panel); border-top: 1px solid var(--line); }
+  form input { flex: 1; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; }
+  form button { padding: 10px 18px; border: 0; border-radius: 6px; background: var(--accent);
+                color: var(--accent-ink); cursor: pointer; }
+  @media (max-width: 640px) { #app { grid-template-columns: 1fr; } aside { display: none; } }
+</style>
+</head>
+<body>
+
+<section id="login">
+  <div class="card">
+    <h1>Distributed Chat</h1>
+    <p>Pick a name to join. You can connect through any server node.</p>
+    <div id="loginError"></div>
+    <input id="nameInput" maxlength="20" placeholder="Your name" autocomplete="off">
+    <button id="joinBtn">Join chat</button>
+  </div>
+</section>
+
+<div id="app">
+  <header>
+    <strong>Distributed Chat</strong>
+    <div id="status"><span class="dot" id="dot"></span><span id="statusText">Offline</span></div>
+  </header>
+  <aside>
+    <h2>Online now</h2>
+    <ul id="users"></ul>
+  </aside>
+  <main>
+    <div id="messages"></div>
+    <form id="form">
+      <input id="msgInput" autocomplete="off" placeholder="Type a message. Private: /msg name text">
+      <button type="submit">Send</button>
+    </form>
+  </main>
+</div>
+
+<script>
+/* ---- Server list used for FAILOVER. Add more ports here if you add nodes. ---- */
+const PORTS = [8001, 8002];
+const SERVERS = PORTS.map(p => `ws://${location.hostname}:${p}/ws`);
+let idx = Math.max(0, PORTS.indexOf(Number(location.port)));  // start with the node that served this page
+
+let username = "", ws = null, everConnected = false, retryTimer = null;
+const $ = id => document.getElementById(id);
+
+function setStatus(state, text) {
+  $("dot").className = "dot " + state;
+  $("statusText").textContent = text;
+}
+
+function addNote(text, isError) {
+  const d = document.createElement("div");
+  d.className = "note" + (isError ? " err" : "");
+  d.textContent = text;
+  $("messages").appendChild(d);
+  scrollDown();
+}
+
+function addMessage(m) {
+  const d = document.createElement("div");
+  const mine = m.user === username;
+  d.className = "msg" + (mine ? " mine" : "") + (m.to ? " private" : "");
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const time = new Date(m.ts * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  let who = mine ? "You" : m.user;
+  if (m.to) who += mine ? ` (private to ${m.to})` : " (private)";
+  meta.textContent = `${who}  ${time}  via ${m.node}`;
+  const body = document.createElement("div");
+  body.textContent = m.text;
+  d.append(meta, body);
+  $("messages").appendChild(d);
+  scrollDown();
+}
+
+function scrollDown() { const el = $("messages"); el.scrollTop = el.scrollHeight; }
+
+function renderUsers(list) {
+  const ul = $("users");
+  ul.innerHTML = "";
+  list.forEach(name => {
+    const li = document.createElement("li");
+    li.textContent = name === username ? name + " (you)" : name;
+    if (name === username) li.className = "me";
+    else li.onclick = () => { $("msgInput").value = `/msg ${name} `; $("msgInput").focus(); };
+    ul.appendChild(li);
+  });
+}
+
+function connect() {
+  clearTimeout(retryTimer);
+  setStatus("offline", `Connecting to ${SERVERS[idx]} ...`);
+  ws = new WebSocket(`${SERVERS[idx]}?user=${encodeURIComponent(username)}`);
+
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === "welcome") {
+      if (!everConnected) { $("login").style.display = "none"; $("app").style.display = "grid"; }
+      everConnected = true;
+      $("messages").innerHTML = "";
+      m.history.forEach(addMessage);
+      renderUsers(m.users);
+      setStatus("online", `Connected to ${m.node}`);
+      addNote(`Connected to ${m.node}`);
+    } else if (m.type === "chat") addMessage(m);
+    else if (m.type === "users") renderUsers(m.users);
+    else if (m.type === "error") {
+      if (!everConnected) $("loginError").textContent = m.text;
+      else addNote(m.text, true);
+    }
+  };
+
+  ws.onclose = ev => {
+    if (!everConnected && ev.code === 4000) return;      // name rejected on first join: stay on login
+    if (!everConnected) { $("loginError").textContent = "Could not reach the server. Is a node running?"; }
+    else {
+      setStatus("offline", "Server lost - switching node...");
+      addNote("Connection lost. Failing over to another server...", true);
+    }
+    idx = (idx + 1) % SERVERS.length;                      // FAILOVER: try the next node
+    if (everConnected) retryTimer = setTimeout(connect, 1500);
+  };
+}
+
+function join() {
+  const name = $("nameInput").value.trim();
+  if (!name) { $("loginError").textContent = "Enter a name first."; return; }
+  username = name; $("loginError").textContent = ""; everConnected = false;
+  connect();
+}
+$("joinBtn").onclick = join;
+$("nameInput").addEventListener("keydown", e => { if (e.key === "Enter") join(); });
+
+$("form").addEventListener("submit", e => {
+  e.preventDefault();
+  let text = $("msgInput").value.trim(), to = null;
+  if (!text) return;
+  const pm = text.match(/^\/msg\s+(\S+)\s+([\s\S]+)/);
+  if (pm) { to = pm[1]; text = pm[2]; }
+  if (!ws || ws.readyState !== WebSocket.OPEN) { addNote("Not connected yet. Message not sent.", true); return; }
+  ws.send(JSON.stringify({text, to}));
+  $("msgInput").value = "";
+});
+</script>
+</body>
+</html>
